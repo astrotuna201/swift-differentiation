@@ -90,6 +90,36 @@ struct CollectionDifferentiableMethodsTests {
     }
 
     @Test
+    func replaceSubrangePullbackWithEmptyZeroCotangent() {
+        // `_vjpReplaceSubrange`'s pullback extracts the new-elements region
+        // from the (post-replacement) self cotangent. An empty self
+        // cotangent is the canonical zero of every count; the extraction
+        // must not trap (it used to index the empty buffer) and must yield
+        // a zero tangent for the new elements.
+        var a: [Double] = [0, 1, 2, 3, 4, 5]
+        let (_, pullback) = a._vjpReplaceSubrange(2 ..< 4, with: [10.0, 11.0])
+
+        var selfTan: Array<Double>.DifferentiableView = .zero
+        let dNew = pullback(&selfTan)
+        #expect(dNew.base.allSatisfy { $0 == 0 })
+        #expect(selfTan.base.allSatisfy { $0 == 0 })
+    }
+
+    @Test
+    func replaceSubrangePullbackWithLiveCotangent() {
+        // Live (non-empty) self cotangent: the new-elements region is
+        // extracted verbatim and the self cotangent is restored to the
+        // pre-replacement layout (subrangeCount zeros in its place).
+        var a: [Double] = [0, 1, 2, 3, 4, 5]
+        let (_, pullback) = a._vjpReplaceSubrange(2 ..< 4, with: [10.0, 11.0])
+
+        var selfTan = Array<Double>.DifferentiableView([0, 0, 7, 8, 0, 9])
+        let dNew = pullback(&selfTan)
+        #expect(dNew.base == [7, 8])
+        #expect(selfTan.base == [0, 0, 0, 0, 0, 9])
+    }
+
+    @Test
     func deadSliceWritebackScatterKeepsSourceCount() {
         // Two 2n->n size-changing slice writebacks into the fields of a
         // Differentiable struct, with the loss reading only ONE of the

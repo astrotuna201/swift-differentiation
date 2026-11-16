@@ -68,6 +68,13 @@ extension Array where Element: Differentiable {
         return (
             value: (),
             pullback: { v in
+                // An empty `v` is the canonical zero cotangent of every
+                // count (see `DifferentiableView.zero`); the new-elements
+                // region is then zero, and the zero self cotangent needs no
+                // layout restoration.
+                if v.base.isEmpty {
+                    return C.TangentVector()
+                }
                 let newElementsRange = lowerBound ..< lowerBound + newElementCount
                 let dElement = v[newElementsRange]
                 v.replaceSubrange(newElementsRange, with: repeatElement(.zero, count: subrangeCount))
