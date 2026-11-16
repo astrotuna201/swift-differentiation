@@ -157,6 +157,100 @@ struct CollectionDifferentiableMethodsTests {
     }
 
     @Test
+    func rangeGetPullbackWithEmptyZeroCotangentAtCountTwo() {
+        // The n=1 edge of the slice-writeback shape (forwardCount == 2):
+        // scattering the canonical empty zero into a count-2 buffer must
+        // preserve the count. Before the fix the empty `replaceSubrange`
+        // deleted the slot and returned a count-1 buffer, which then either
+        // tripped the DifferentiableView.+ count precondition (one live +
+        // one dead writeback) or the cta-set pullback's count assert (both
+        // writebacks dead, both buffers shrinking to the same size).
+        let arr: [Double] = [1, 2]
+        let (_, scatterFirst) = arr._vjpSubscriptRangeGet(bounds: 0 ..< 1)
+        let (_, scatterSecond) = arr._vjpSubscriptRangeGet(bounds: 1 ..< 2)
+
+        let zeroFirst = scatterFirst(ArraySlice<Double>.DifferentiableView.zero)
+        #expect(zeroFirst.base.count == 2)
+        #expect(zeroFirst.base.allSatisfy { $0 == 0 })
+
+        let zeroSecond = scatterSecond(ArraySlice<Double>.DifferentiableView.zero)
+        #expect(zeroSecond.base.count == 2)
+        #expect(zeroSecond.base.allSatisfy { $0 == 0 })
+
+        let liveFirst = scatterFirst(ArraySlice<Double>.DifferentiableView([3]))
+        #expect(liveFirst.base.count == 2)
+        #expect(liveFirst.base == [3, 0])
+    }
+
+    @Test
+    func deadSliceWritebackScatterKeepsSourceCountAtN1() {
+        // The n=1 edge of `deadSliceWritebackScatterKeepsSourceCount`: the
+        // same two 2n->n slice writebacks with n = 1 (the smallest legal
+        // size — big has count 2, each writeback a count-1 slice). Before
+        // the fix the dead writeback's scatter returned a count-1 buffer
+        // and the accumulation tripped the DifferentiableView.+ count
+        // precondition ("Count mismatch: 1 and 2").
+        @differentiable(reverse, wrt: x)
+        func core(x: TwoFieldState, n: Int) -> TwoFieldState {
+            var big = [Double](repeating: 0, count: 2 * n)
+            for o in 0 ..< n {
+                big[cta: o] = x.f0[o]
+                big[cta: n + o] = x.f1[o]
+            }
+            var out = x
+            out.f0 = Array(big[0 ..< n])
+            out.f1 = Array(big[n ..< 2 * n])
+            return out
+        }
+
+        let n = 1
+        let x0 = TwoFieldState(f0: [0.3], f1: [0.5])
+        let (_, pullback) = valueWithPullback(at: x0) { a in
+            core(x: a, n: n).f0[0]
+        }
+        let grad = pullback(1)
+        #expect(grad.f0.base == [1])
+        #expect(grad.f1.base.allSatisfy { $0 == 0 })
+    }
+
+    @Test
+    func deadSliceWritebackAllDeadScatterKeepsSourceCountAtN1() {
+        // The fully-dead n=1 edge: the loss never reads the written fields
+        // (empty index list — the reverse pass still runs with the
+        // canonical empty-zero cotangents). Before the fix BOTH scatters
+        // shrank the count-2 buffer to count 1; the two equal-size buffers
+        // then accumulated cleanly and the cta-set pullback tripped its
+        // `tangentVector.count == forwardCount` assert instead.
+        @differentiable(reverse, wrt: x)
+        func core(x: TwoFieldState, n: Int) -> TwoFieldState {
+            var big = [Double](repeating: 0, count: 2 * n)
+            for o in 0 ..< n {
+                big[cta: o] = x.f0[o]
+                big[cta: n + o] = x.f1[o]
+            }
+            var out = x
+            out.f0 = Array(big[0 ..< n])
+            out.f1 = Array(big[n ..< 2 * n])
+            return out
+        }
+
+        let n = 1
+        let x0 = TwoFieldState(f0: [0.3], f1: [0.5])
+        let deadIdx: [Int] = []
+        let (_, pullback) = valueWithPullback(at: x0) { a in
+            let c = core(x: a, n: n)
+            var m: Double = 0
+            for i in deadIdx {
+                m += c.f0[i]
+            }
+            return m
+        }
+        let grad = pullback(1)
+        #expect(grad.f0.base.allSatisfy { $0 == 0 })
+        #expect(grad.f1.base.allSatisfy { $0 == 0 })
+    }
+
+    @Test
     func testReplacingSubrange() {
         let a: [Double] = [0, 1, 2, 3, 4]
         let replacement: [Double] = [10, 11]
