@@ -34,7 +34,14 @@ extension Array where Element: Differentiable {
             value: self[bounds],
             pullback: { v in
                 var result = Array<Element>.TangentVector(repeating: .zero, count: forwardCount)
-                result.replaceSubrange(bounds, with: v)
+                // An empty `v` is the canonical zero cotangent of every count
+                // (see `DifferentiableView.zero`); replacing `bounds` with an
+                // empty collection would delete those slots and shrink the
+                // `forwardCount`-element buffer, so the zero scatter must be
+                // a no-op on the buffer.
+                if !v.base.isEmpty {
+                    result.replaceSubrange(bounds, with: v)
+                }
                 return result
             }
         )
